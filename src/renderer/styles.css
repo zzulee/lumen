@@ -70,6 +70,14 @@
    Base
    ============================================================ */
 
+/* Default UI font. Microsoft YaHei first, because this is a Chinese-first
+   app; the rest are the usual cross-platform fallbacks. */
+:root {
+  --ui-font: 'Microsoft YaHei', '微软雅黑', -apple-system, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Noto Sans CJK SC', system-ui, sans-serif;
+  --mono-font: 'Cascadia Code', 'SF Mono', Consolas, 'Microsoft YaHei', ui-monospace, monospace;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -86,20 +94,24 @@ body {
   flex-direction: column;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
-    system-ui, sans-serif;
+  font-family: var(--ui-font);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   transition: background 0.18s ease, color 0.18s ease;
 }
 
-/* Draggable window strip at the top (space for macOS traffic lights). */
+/* Draggable window strip at the top (space for macOS traffic lights only —
+   Windows keeps its native frame, so the strip is hidden there). */
 .titlebar {
   height: 26px;
   flex: 0 0 auto;
   -webkit-app-region: drag;
   background: var(--bg);
   border-bottom: 1px solid transparent;
+}
+
+body:not(.mac) .titlebar {
+  display: none;
 }
 
 ::-webkit-scrollbar {
@@ -443,9 +455,16 @@ body {
 }
 
 .cm-scroller {
-  font-family: inherit;
+  /* CodeMirror injects its own `.cm-scroller { font-family: monospace }` after
+     this sheet, so the app font has to win explicitly. */
+  font-family: var(--ui-font) !important;
   line-height: 1.7;
   overflow: auto;
+}
+
+.cm-editor,
+.cm-content {
+  font-family: var(--ui-font) !important;
 }
 
 .cm-content {
@@ -579,7 +598,7 @@ body {
 
 /* Fenced code block lines */
 .cm-line.lumen-code {
-  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 13.5px;
   line-height: 1.65;
   background: var(--code-bg);
@@ -606,7 +625,7 @@ body {
 
 /* Table lines */
 .cm-line.lumen-table {
-  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 13px;
   line-height: 1.9;
   color: var(--text);
@@ -696,7 +715,7 @@ body {
 }
 
 .lumen-inline-code {
-  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 0.875em;
   background: var(--inline-code-bg);
   border: 1px solid var(--border-soft);
@@ -814,7 +833,7 @@ body {
 }
 
 .lumen-table-widget code {
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-family: var(--mono-font);
   font-size: 0.86em;
   background: var(--inline-code-bg);
   border-radius: 3px;

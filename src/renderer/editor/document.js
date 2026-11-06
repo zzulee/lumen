@@ -55,6 +55,43 @@ const fenceHighlight = HighlightStyle.define([
    ============================================================ */
 
 const themeCompartment = new Compartment();
+const phrasesCompartment = new Compartment();
+
+/**
+ * Localised labels for CodeMirror's built-in search panel. The keys are the
+ * literal English strings CodeMirror itself looks up through the `phrases`
+ * facet, so they cannot be renamed.
+ */
+function searchPhrases(labels) {
+  const phrases = {
+    Find: labels.find,
+    Replace: labels.replace,
+    next: labels.next,
+    previous: labels.previous,
+    all: labels.all,
+    'match case': labels.matchCase,
+    regexp: labels.regexp,
+    'by word': labels.byWord,
+    'replace all': labels.replaceAll,
+    close: labels.close,
+  };
+  return EditorState.phrases.of(phrases);
+}
+
+function defaultPhrases() {
+  return {
+    find: 'Find',
+    replace: 'Replace',
+    next: 'next',
+    previous: 'previous',
+    all: 'all',
+    matchCase: 'match case',
+    byWord: 'by word',
+    regexp: 'regexp',
+    replaceAll: 'replace all',
+    close: 'close',
+  };
+}
 
 function gutterColor(theme) {
   return EditorView.theme({
@@ -99,6 +136,8 @@ function createState({ content, onChange }) {
 
       livePreview,
 
+      phrasesCompartment.of(searchPhrases(defaultPhrases())),
+
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
 
       EditorView.updateListener.of((update) => {
@@ -131,6 +170,7 @@ export class DocumentView {
 
     this.dirty = false;
     this.theme = 'dark';
+    this.phrases = defaultPhrases();
 
     // The view is created against real content. Building it empty and then
     // swapping the state in `load()` would leave the live-preview plugin
@@ -169,6 +209,7 @@ export class DocumentView {
     this.dirty = false;
     this.create(content);
     this.setTheme(this.theme);
+    this.setSearchPhrases(this.phrases);
 
     if (dir) setBaseDir(dir);
     if (this.view) {
@@ -198,6 +239,16 @@ export class DocumentView {
     if (this.view) {
       this.view.dispatch({
         effects: themeCompartment.reconfigure(gutterColor(theme)),
+      });
+    }
+  }
+
+  /** Re-label the built-in search panel after a language switch. */
+  setSearchPhrases(labels) {
+    this.phrases = labels || this.phrases;
+    if (this.view) {
+      this.view.dispatch({
+        effects: phrasesCompartment.reconfigure(searchPhrases(this.phrases)),
       });
     }
   }

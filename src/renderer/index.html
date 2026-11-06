@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -16,8 +16,8 @@
     <div class="shell">
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-head">
-          <span class="workspace-name" id="workspace-name">No folder</span>
-          <button class="icon-btn" id="btn-open-folder" title="Open folder" aria-label="Open folder">
+          <span class="workspace-name" id="workspace-name">未打开文件夹</span>
+          <button class="icon-btn" id="btn-open-folder" title="打开文件夹" aria-label="打开文件夹">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M1.5 3.5h4l1.5 2h7.5v7a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1z"
                   fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
@@ -27,12 +27,12 @@
 
         <div class="sidebar-body">
           <section class="recent-section" id="recent-section">
-            <h2 class="section-title">Recent</h2>
+            <h2 class="section-title" id="recent-title">最近</h2>
             <ul class="recent-list" id="recent-list"></ul>
           </section>
 
           <section class="tree-section" id="tree-section" hidden>
-            <h2 class="section-title">Files</h2>
+            <h2 class="section-title" id="tree-title">文件</h2>
             <ul class="tree" id="tree"></ul>
           </section>
         </div>
@@ -40,7 +40,7 @@
 
       <main class="main">
         <div class="doc-header">
-          <div class="doc-title" id="doc-title">untitled</div>
+          <div class="doc-title" id="doc-title">未命名</div>
           <div class="doc-meta" id="doc-meta"></div>
         </div>
         <div class="editor-host" id="editor-host"></div>
@@ -48,15 +48,15 @@
 
       <aside class="outline" id="outline">
         <div class="sidebar-head">
-          <span class="workspace-name">Outline</span>
+          <span class="workspace-name" id="outline-title">大纲</span>
         </div>
         <div class="outline-body" id="outline-body"></div>
       </aside>
     </div>
 
     <div class="statusbar">
-      <span id="status-words">0 words</span>
-      <span id="status-chars">0 chars</span>
+      <span id="status-words">0 字</span>
+      <span id="status-chars">0 字符</span>
       <span class="spacer"></span>
       <span id="status-path"></span>
       <span id="status-saved"></span>

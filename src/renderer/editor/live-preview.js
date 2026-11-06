@@ -316,7 +316,26 @@ function parseImageLink(raw) {
    The plugin
    ============================================================ */
 
-function buildDecorations(view) {
+/**
+ * The plugin can be constructed before the background parser has produced a
+ * tree; `syntaxTree` then returns an empty root and nothing matches.
+ */
+function parsedTree(state) {
+  return ensureSyntaxTree(state, state.doc.length, 400) || syntaxTree(state);
+}
+
+/**
+ * Builds *only* the decorations whose construct starts inside `range`, plus
+ * every currently revealed (caret-touching) construct — the latter can be
+ * anywhere in the document but is what the user is editing right now.
+ *
+ * Decorations outside this set are preserved by `StateField.map`, so nothing
+ * that is still valid ever disappears. The one thing that must not be skipped
+ * is a construct that *starts* before the range but is revealed by a caret
+ * inside it (e.g. a fenced code block); the tree walk below therefore begins
+ * at the enclosing top-level node rather than at the raw offset.
+ */
+function buildDecorations(view, range = { from: 0, to: view.state.doc.length }, carry = null) {
   const { state } = view;
   const doc = state.doc;
 
@@ -357,16 +376,28 @@ function buildDecorations(view) {
   };
 
   const tableHeadLine = Decoration.line({ class: 'lumen-table head' });
-  // The plugin can be constructed before the background parser has produced
-  // a tree; `syntaxTree` then returns an empty root and nothing matches.
-  const tree =
-    ensureSyntaxTree(state, doc.length, 400) || syntaxTree(state);
+  const tree = parsedTree(state);
+
+  // Start at the outermost node that contains the range, so a construct
+  // beginning before the window (the `#` of a heading, the fence of a code
+  // block) is still visited as a whole.
+  let walkFrom = range.from;
+  let walkTo = range.to;
+  const startNode = tree.resolveInner(walkFrom, 1);
+  let ancestor = startNode;
+  while (ancestor.parent && ancestor.parent.name !== 'Document') ancestor = ancestor.parent;
+  if (ancestor.type.name !== 'Document') walkFrom = Math.min(walkFrom, ancestor.from);
+  const endNode = tree.resolveInner(Math.max(walkFrom, walkTo - 1), -1);
+  ancestor = endNode;
+  while (ancestor.parent && ancestor.parent.name !== 'Document') ancestor = ancestor.parent;
+  if (ancestor.type.name !== 'Document') walkTo = Math.max(walkTo, ancestor.to);
+  walkTo = Math.min(walkTo, doc.length);
 
   let entered = 0;
   let threw = null;
   tree.iterate({
-    from: 0,
-    to: doc.length,
+    from: walkFrom,
+    to: walkTo,
     enter: (ref) => {
       entered++;
       try {
@@ -650,26 +681,76 @@ function buildDecorations(view) {
     return true; // unknown node: keep descending
   }
 
+  // Everything outside the rebuilt window keeps its previous decoration.
+  // Skipped decorations start *before* walkFrom (so they do not end past
+  // walkFrom+1) and at/after walkTo; everything between is rebuilt from the
+  // tree, so anything genuinely at those boundaries is already in `out`.
+  if (carry) collectOutside(carry, out, walkFrom, walkTo);
+
   // Ranges are emitted in tree order, which is not position order (a nested
   // construct yields its inner span before its outer markers). Let the library
   // sort them: it knows where block decorations belong, which a manual sort by
   // `from` does not.
-  const built = Decoration.set(out, true);
-
-  return built;
+  try {
+    return Decoration.set(out, true);
+  } catch {
+    // Overlapping ranges. The caller (see `livePreviewField.update`) retries
+    // with a full-document build.
+    return null;
+  }
 }
 
 
-function safeBuild(view) {
+function safeBuild(view, range, carry) {
   try {
-    return buildDecorations(view);
+    return buildDecorations(view, range, carry);
   } catch (err) {
     if (typeof window !== 'undefined') {
       (window.__lumenDecoErrors = window.__lumenDecoErrors || []).push(
         String((err && err.stack) || err)
       );
     }
-    return Decoration.none;
+    // Keep whatever was already on screen instead of blanking the document.
+    return carry || Decoration.none;
+  }
+}
+
+/**
+ * The window of the document whose decorations are rebuilt. Rebuilding the
+ * whole document on every keystroke is O(document), which turns typing in a
+ * long file into a stutter; only the region the user can actually see (plus a
+ * screenful either side) needs to be current. Decorations outside it are
+ * carried over unchanged by `map`, which is why they survive edits.
+ */
+const REBUILD_MARGIN = 2000;
+
+function rebuildRange(state) {
+  const sel = state.selection.main;
+  const fromLine = state.doc.lineAt(sel.from);
+  const toLine = state.doc.lineAt(sel.to);
+
+  // Snap to line boundaries so the window never starts mid-construct.
+  return {
+    from: state.doc.lineAt(Math.max(0, fromLine.from - REBUILD_MARGIN)).from,
+    to: state.doc.lineAt(Math.min(state.doc.length, toLine.to + REBUILD_MARGIN)).to,
+  };
+}
+
+/** Collect decorations that survive outside the freshly rebuilt window. */
+function collectOutside(set, out, walkFrom, walkTo) {
+  // Line decorations sit *at* the line start, so a decoration exactly at a
+  // boundary belongs to the rebuilt window, not to the carried-over side.
+  if (walkFrom > 0) {
+    set.between(0, walkFrom, (from, to, value) => {
+      if (from >= walkFrom) return;
+      out.push(value.range(from, to));
+    });
+  }
+  if (walkTo < set.length) {
+    set.between(walkTo, set.length, (from, to, value) => {
+      if (from < walkTo) return;
+      out.push(value.range(from, to));
+    });
   }
 }
 
@@ -678,21 +759,30 @@ function safeBuild(view) {
  * from a plugin, and which markers are visible depends on the selection —
  * something a plugin is not re-run for. A state field serves both: it
  * recomputes on every transaction and maps decorations through changes.
+ *
+ * Decorations outside the rebuilt window are carried over by remapping the
+ * previous set. The one case that breaks that: a windowed rebuild produces a
+ * decoration in the same place as a mapped one (e.g. a large jump or paste),
+ * and `Decoration.set` rejects overlaps outright. So a build that came out
+ * with overlaps falls back to a whole-document build, which is slow but never
+ * loses a decoration.
  */
 const livePreviewField = StateField.define({
   create(state) {
-    return safeBuild({ state, viewport: { from: 0, to: state.doc.length } });
+    return safeBuild({ state }, { from: 0, to: state.doc.length });
   },
 
   update(value, tr) {
     const forced = tr.effects.some((effect) => effect.is(refreshEffect));
-    if (tr.docChanged || tr.selection || forced) {
-      return safeBuild({
-        state: tr.state,
-        viewport: { from: 0, to: tr.state.doc.length },
-      });
-    }
-    return value.map(tr.changes);
+    if (!tr.docChanged && !tr.selection && !forced) return value.map(tr.changes);
+
+    const mapped = value.map(tr.changes);
+    const range = rebuildRange(tr.state);
+    const built = safeBuild({ state: tr.state }, range, mapped);
+    if (built) return built;
+
+    // Overlap: rebuild everything from scratch instead.
+    return safeBuild({ state: tr.state }, { from: 0, to: tr.state.doc.length });
   },
 
   provide: (field) => EditorView.decorations.from(field),

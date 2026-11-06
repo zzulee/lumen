@@ -12,7 +12,8 @@ export const printStyles = `
     margin: 0;
     background: #ffffff;
     color: #2e3238;
-    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: 'Microsoft YaHei', '微软雅黑', -apple-system, 'Segoe UI', 'PingFang SC',
+      'Hiragino Sans GB', 'Noto Sans CJK SC', sans-serif;
     font-size: 16px;
     line-height: 1.75;
     -webkit-font-smoothing: antialiased;

@@ -1,7 +1,9 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const os = require('node:os');
+const { translate, LANGUAGES, DEFAULT_LANGUAGE, MESSAGES } = require('../shared/i18n.js');
 
 /** @type {BrowserWindow | null} */
 let win = null;
@@ -9,6 +11,39 @@ let win = null;
 let currentWorkspace = null;
 
 const RECENT_LIMIT = 12;
+
+/* ------------------------------ settings ------------------------------ */
+
+let settings = { language: DEFAULT_LANGUAGE };
+
+function settingsFile() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function loadSettings() {
+  try {
+    const raw = fsSync.readFileSync(settingsFile(), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && LANGUAGES.includes(parsed.language)) {
+      settings.language = parsed.language;
+    }
+  } catch {
+    /* first run, or unreadable — keep defaults */
+  }
+}
+
+async function saveSettings() {
+  try {
+    await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+    await fs.writeFile(settingsFile(), JSON.stringify(settings, null, 2), 'utf8');
+  } catch {
+    /* settings are best-effort */
+  }
+}
+
+function t(key, vars) {
+  return translate(settings.language, key, vars);
+}
 
 function recentFile() {
   return path.join(app.getPath('userData'), 'recent.json');
@@ -32,7 +67,17 @@ async function pushRecent(entry) {
   return next;
 }
 
+/* ------------------------------ window ------------------------------ */
+
+let documentDirty = false;
+let closePromptOpen = false;
+let allowClose = false;
+
 function createWindow({ show = true } = {}) {
+  // A previous window may have closed via the guard; the new one starts fresh.
+  allowClose = false;
+  closePromptOpen = false;
+
   win = new BrowserWindow({
     width: 1180,
     height: 780,
@@ -40,7 +85,9 @@ function createWindow({ show = true } = {}) {
     minHeight: 520,
     show: false,
     backgroundColor: '#16181d',
-    titleBarStyle: 'hiddenInset',
+    // `hiddenInset` is macOS-only; on Windows the native frame is kept so
+    // there is exactly one title bar.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -55,6 +102,16 @@ function createWindow({ show = true } = {}) {
   });
   win.on('closed', () => {
     win = null;
+  });
+
+  // Ask the renderer whether it has unsaved work before tearing the window
+  // down; it answers through `app:close-response`.
+  win.on('close', (event) => {
+    if (allowClose) return;
+    event.preventDefault();
+    if (closePromptOpen) return;
+    closePromptOpen = true;
+    send('app:close-request');
   });
 
   // Open external links in the system browser instead of in-app.
@@ -77,105 +134,123 @@ function send(channel, payload) {
 
 /* ------------------------------ menu ------------------------------ */
 
+function setLanguage(language) {
+  if (!LANGUAGES.includes(language) || language === settings.language) return;
+  settings.language = language;
+  saveSettings();
+  buildMenu();
+  send('menu:language', language);
+}
+
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const template = [
     ...(isMac ? [{ role: 'appMenu' }] : []),
     {
-      label: 'File',
+      label: t('menuFile'),
       submenu: [
         {
-          label: 'New File',
+          label: t('newFile'),
           accelerator: 'CmdOrCtrl+N',
           click: () => send('menu:new-file'),
         },
         {
-          label: 'Open File…',
+          label: t('openFile'),
           accelerator: 'CmdOrCtrl+O',
           click: () => send('menu:open-file'),
         },
         {
-          label: 'Open Folder…',
+          label: t('openFolder'),
           accelerator: 'CmdOrCtrl+Shift+O',
           click: () => send('menu:open-folder'),
         },
         { type: 'separator' },
         {
-          label: 'Save',
+          label: t('save'),
           accelerator: 'CmdOrCtrl+S',
           click: () => send('menu:save'),
         },
         {
-          label: 'Save As…',
+          label: t('saveAs'),
           accelerator: 'CmdOrCtrl+Shift+S',
           click: () => send('menu:save-as'),
         },
         { type: 'separator' },
         {
-          label: 'Export HTML…',
+          label: t('exportHtml'),
           click: () => send('menu:export', 'html'),
         },
         {
-          label: 'Export PDF…',
+          label: t('exportPdf'),
           click: () => send('menu:export', 'pdf'),
         },
         { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' },
+        isMac ? { role: 'close', label: t('close') } : { role: 'quit', label: t('quit') },
       ],
     },
     {
-      label: 'Edit',
+      label: t('menuEdit'),
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        { role: 'undo', label: t('undo') },
+        { role: 'redo', label: t('redo') },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'pasteAndMatchStyle' },
-        { role: 'selectAll' },
+        { role: 'cut', label: t('cut') },
+        { role: 'copy', label: t('copy') },
+        { role: 'paste', label: t('paste') },
+        { role: 'pasteAndMatchStyle', label: t('pasteAndMatchStyle') },
+        { role: 'selectAll', label: t('selectAll') },
         { type: 'separator' },
         {
-          label: 'Find in Document',
+          label: t('find'),
           accelerator: 'CmdOrCtrl+F',
           click: () => send('menu:find'),
         },
       ],
     },
     {
-      label: 'View',
+      label: t('menuView'),
       submenu: [
         {
-          label: 'Toggle Outline',
+          label: t('toggleOutline'),
           accelerator: 'CmdOrCtrl+Shift+B',
           click: () => send('menu:toggle-outline'),
         },
         {
-          label: 'Toggle Sidebar',
+          label: t('toggleSidebar'),
           accelerator: 'CmdOrCtrl+Shift+E',
           click: () => send('menu:toggle-sidebar'),
         },
         { type: 'separator' },
         {
-          label: 'Light Theme',
+          label: t('language'),
+          submenu: LANGUAGES.map((code) => ({
+            label: code === 'zh' ? t('chinese') : t('english'),
+            type: 'radio',
+            checked: settings.language === code,
+            click: () => setLanguage(code),
+          })),
+        },
+        { type: 'separator' },
+        {
+          label: t('lightTheme'),
           accelerator: 'CmdOrCtrl+Shift+L',
           click: () => send('menu:theme', 'light'),
         },
         {
-          label: 'Dark Theme',
+          label: t('darkTheme'),
           click: () => send('menu:theme', 'dark'),
         },
         { type: 'separator' },
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
+        { role: 'reload', label: t('reload') },
+        { role: 'toggleDevTools', label: t('devTools') },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { role: 'togglefullscreen' },
+        { role: 'resetZoom', label: t('zoomReset') },
+        { role: 'zoomIn', label: t('zoomIn') },
+        { role: 'zoomOut', label: t('zoomOut') },
+        { role: 'togglefullscreen', label: t('fullscreen') },
       ],
     },
-    { role: 'windowMenu' },
+    { role: 'windowMenu', label: t('menuWindow') },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -225,6 +300,8 @@ ipcMain.handle('app:bootstrap', async () => ({
   recent: await loadRecent(),
   version: app.getVersion(),
   platform: process.platform,
+  language: settings.language,
+  messages: MESSAGES[settings.language] || MESSAGES[DEFAULT_LANGUAGE],
 }));
 
 ipcMain.handle('file:read', async (_event, filePath) => {
@@ -249,8 +326,8 @@ ipcMain.handle('dialog:open-file', async () => {
   const result = await dialog.showOpenDialog(win, {
     properties: ['openFile'],
     filters: [
-      { name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mdx', 'txt'] },
-      { name: 'All Files', extensions: ['*'] },
+      { name: t('filterMarkdown'), extensions: ['md', 'markdown', 'mdown', 'mdx', 'txt'] },
+      { name: t('filterAll'), extensions: ['*'] },
     ],
   });
   return result.canceled ? null : result.filePaths[0];
@@ -258,11 +335,11 @@ ipcMain.handle('dialog:open-file', async () => {
 
 ipcMain.handle('dialog:save-file', async (_event, suggested, content) => {
   const result = await dialog.showSaveDialog(win, {
-    defaultPath: suggested || path.join(app.getPath('documents'), 'untitled.md'),
+    defaultPath: suggested || path.join(app.getPath('documents'), t('untitled')),
     filters: [
-      { name: 'Markdown', extensions: ['md'] },
-      { name: 'HTML', extensions: ['html'] },
-      { name: 'PDF', extensions: ['pdf'] },
+      { name: t('filterMarkdown'), extensions: ['md'] },
+      { name: t('filterHtml'), extensions: ['html'] },
+      { name: t('filterPdf'), extensions: ['pdf'] },
     ],
   });
   if (result.canceled || !result.filePath) return null;
@@ -296,26 +373,23 @@ ipcMain.handle('recent:push', async (_event, entry) => pushRecent(entry));
 ipcMain.handle('export:html', async (_event, suggested, html) => {
   const result = await dialog.showSaveDialog(win, {
     defaultPath: suggested || path.join(app.getPath('documents'), 'export.html'),
-    filters: [{ name: 'HTML', extensions: ['html'] }],
+    filters: [{ name: t('filterHtml'), extensions: ['html'] }],
   });
   if (result.canceled || !result.filePath) return null;
   await fs.writeFile(result.filePath, html, 'utf8');
   return result.filePath;
 });
 
-ipcMain.handle('export:pdf', async (_event, suggested) => {
+ipcMain.handle('export:pdf', async (_event, suggested, html) => {
   const result = await dialog.showSaveDialog(win, {
     defaultPath: suggested || path.join(os.homedir(), 'export.pdf'),
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    filters: [{ name: t('filterPdf'), extensions: ['pdf'] }],
   });
-  if (result.canceled || !result.filePath || !win) return null;
+  if (result.canceled || !result.filePath) return null;
 
   // Render a print-oriented copy in a hidden window so the PDF is clean
-  // (no sidebar, no outline, no scrollbars).
-  const { html } = await win.webContents.executeJavaScript(
-    'window.__lumenExportHtml ? window.__lumenExportHtml() : ""'
-  );
-
+  // (no sidebar, no outline, no scrollbars). The renderer hands over the
+  // already-rendered HTML so this never races the editor's buffer.
   const printWin = new BrowserWindow({
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
@@ -334,11 +408,36 @@ ipcMain.handle('export:pdf', async (_event, suggested) => {
 });
 
 ipcMain.handle('window:set-title', (_event, title, edited) => {
+  documentDirty = Boolean(edited);
   if (win && !win.isDestroyed()) {
     win.setTitle(title);
-    if (process.platform === 'darwin') win.setDocumentEdited(Boolean(edited));
+    if (process.platform === 'darwin') win.setDocumentEdited(documentDirty);
   }
   return true;
+});
+
+/* ------------------------------ close flow ------------------------------ */
+
+ipcMain.handle('app:close-response', (_event, action) => {
+  closePromptOpen = false;
+  if (action === 'cancel') return false;
+  allowClose = true;
+  if (win && !win.isDestroyed()) win.close();
+  return true;
+});
+
+ipcMain.handle('app:ask-close', async (_event, name) => {
+  const result = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: [t('closeSave'), t('closeDontSave'), t('closeCancel')],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    title: t('closeTitle'),
+    message: t('closeMessage', { name }),
+  });
+  if (result.response === 2) return 'cancel';
+  return result.response === 0 ? 'save' : 'discard';
 });
 
 ipcMain.handle('shell:open-external', (_event, url) => {
@@ -361,8 +460,10 @@ async function runCapture(outDir, fixturePath, theme) {
   // The window must actually be shown: a hidden window does not lay out
   // properly, which collapses the editor viewport and breaks capture.
   createWindow({ show: true });
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+  });
   await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
-
   // Wait for boot() to finish loading its start document, otherwise it
   // overwrites the fixture we are about to install.
   await win.webContents.executeJavaScript('window.__lumenReady');
@@ -410,13 +511,13 @@ async function runCapture(outDir, fixturePath, theme) {
       out.decoCounts = window.__lumenCountDecorations();
       out.decoErrors = (window.__lumenDecoErrors || []).slice(0, 3);
       out.decoSample = Array.from(document.querySelectorAll('.cm-line'))
-        .filter((l) => l.textContent.includes('sentence with'))
+        .filter((l) => l.textContent.includes('bold text'))
         .map((l) => l.innerHTML.slice(0, 400));
 
       // Walk the document and capture counts with each construct in view.
       out.perRegion = [];
       for (const item of [
-        ['top', '# Lumen Feature'],
+        ['top', '# '],
         ['code', 'function greet'],
         ['table', '| Feature | Status'],
         ['quote', '> A block quote'],
@@ -443,6 +544,44 @@ async function runCapture(outDir, fixturePath, theme) {
   `);
 
   const errors = await win.webContents.executeJavaScript('window.__lumenErrors || []');
+
+  // Language switch + search panel + default font.
+  const uiCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const out = {};
+
+      out.fontFamily = getComputedStyle(document.querySelector('.cm-content')).fontFamily;
+      out.langBefore = document.documentElement.lang;
+      out.chromeBefore = {
+        recent: document.getElementById('recent-title').textContent,
+        outline: document.getElementById('outline-title').textContent,
+        words: document.getElementById('status-words').textContent,
+      };
+
+      window.__lumenSetLanguage('en');
+      await new Promise((r) => setTimeout(r, 60));
+      out.langAfter = document.documentElement.lang;
+      out.chromeAfter = {
+        recent: document.getElementById('recent-title').textContent,
+        outline: document.getElementById('outline-title').textContent,
+        words: document.getElementById('status-words').textContent,
+        saved: document.getElementById('status-saved').textContent,
+      };
+      out.findOpen = window.__lumenOpenFind();
+      out.findButtons = Array.from(document.querySelectorAll('.cm-search button'))
+        .map((b) => b.textContent.trim())
+        .slice(0, 6);
+
+      window.__lumenSetLanguage('zh');
+      await new Promise((r) => setTimeout(r, 60));
+      out.chromeBack = {
+        recent: document.getElementById('recent-title').textContent,
+        words: document.getElementById('status-words').textContent,
+      };
+      return out;
+    })()
+  `);
+  console.log('[capture] ui check:', JSON.stringify(uiCheck, null, 2));
 
   // Per-region screenshots, taken from the main process.
   for (const item of [
@@ -502,6 +641,46 @@ async function runCapture(outDir, fixturePath, theme) {
   console.log('[capture] wrote', outDir);
 }
 
+/** Headless check of the dirty-guard close flow (no dialogs are opened). */
+async function runCloseCheck() {
+  console.log('[close-check] start');
+  createWindow({ show: true });
+  win.webContents.on('console-message', (_event, level, message) => {
+    console.log(`[renderer:${level}] ${message}`);
+  });
+  await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
+  console.log('[close-check] loaded');
+  await win.webContents.executeJavaScript('window.__lumenReady');
+  console.log('[close-check] ready');
+
+  const result = await win.webContents.executeJavaScript(`
+    (async () => {
+      const out = {};
+      out.cleanClose = await window.__lumenSimulateClose('cancel');
+      out.dirtyBefore = window.__lumenProbe().dirty;
+
+      window.__lumenTypeText('dirty');
+      await new Promise((r) => setTimeout(r, 80));
+      out.dirtyAfter = window.__lumenProbe().dirty;
+
+      // Stubbed answer: "cancel" must leave the buffer dirty and the window open.
+      out.answerCancel = await window.__lumenSimulateClose('cancel');
+      out.dirtyAfterCancel = window.__lumenProbe().dirty;
+
+      // Stubbed answer: "discard" must proceed.
+      out.answerDiscard = await window.__lumenSimulateClose('discard');
+
+      window.__lumenSimulateClose(null);
+      return out;
+    })()
+  `);
+  console.log('[close-check]', JSON.stringify(result, null, 2));
+
+  // `app.quit()` would be blocked by the same close guard this check just
+  // exercised; this is a throwaway process, so end it outright.
+  process.exit(0);
+}
+
 const captureIndex = process.argv.indexOf('--capture');
 
 // Single-instance: re-focus the existing window instead of spawning a second one.
@@ -517,6 +696,8 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    loadSettings();
+
     if (captureIndex !== -1) {
       process.env.LUMEN_HARNESS = '1';
       const outDir = process.argv[captureIndex + 1];
@@ -527,6 +708,17 @@ if (!gotLock) {
       runCapture(outDir, fixture, theme)
         .catch((err) => {
           console.error('[capture] failed:', err);
+          process.exitCode = 1;
+        })
+        .finally(() => app.quit());
+      return;
+    }
+
+    if (process.argv.includes('--close-check')) {
+      process.env.LUMEN_HARNESS = '1';
+      runCloseCheck()
+        .catch((err) => {
+          console.error('[close-check] failed:', err);
           process.exitCode = 1;
         })
         .finally(() => app.quit());

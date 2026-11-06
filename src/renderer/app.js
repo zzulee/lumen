@@ -2,62 +2,37 @@ import { DocumentView } from './editor/document.js';
 import { extractOutline } from './editor/outline.js';
 import { setBaseDir, refreshEffect } from './editor/live-preview.js';
 import { EditorView } from '@codemirror/view';
-
-const WELCOME = [
-  '# Welcome to Lumen',
-  '',
-  'A local-first Markdown editor. The file on disk is always the raw',
-  'Markdown source — what you see here is a *rendering of it*, not a',
-  'separate document model.',
-  '',
-  '## Try the live preview',
-  '',
-  'Put the caret inside this **bold phrase** and the `**` markers appear.',
-  'Move it away and they disappear again. Same for `inline code`,',
-  '*italics*, ~~strikethrough~~, and [links](https://example.com).',
-  '',
-  '### Lists and tasks',
-  '',
-  '- First item',
-  '- Second item with **emphasis**',
-  '  - Nested item',
-  '  - Another nested one',
-  '',
-  '1. Numbered',
-  '2. Also numbered',
-  '',
-  '- [x] A finished task',
-  '- [ ] Something still to do',
-  '',
-  '### Code',
-  '',
-  '```js',
-  'function greet(name) {',
-  '  const greeting = `hello, ${name}`;',
-  '  return greeting;',
-  '}',
-  '```',
-  '',
-  '### Tables',
-  '',
-  'Move the caret out of this table and it renders as a grid:',
-  '',
-  '| Feature | Status | Notes |',
-  '|---------|:------:|-------|',
-  '| Live preview | done | markers hide on blur |',
-  '| Code fences | done | focus to edit |',
-  '| Tables | done | click to edit |',
-  '',
-  '> A block quote, for when someone else said it better.',
-  '',
-  '---',
-  '',
-  'Open a folder with the file button to browse your own notes.',
-  '',
-].join('\n');
-
+import { openSearchPanel } from '@codemirror/search';
+import { LANGUAGES, DEFAULT_LANGUAGE, translate } from '../shared/i18n.js';
 
 const api = window.lumen;
+
+/* ============================================================
+   i18n
+   ============================================================
+
+   The catalogue lives in `src/shared/i18n.js` and is the same table the main
+   process uses for menus and native dialogs, so the two can never drift.
+   Switching language re-applies it to every piece of chrome without a reload.
+   ============================================================ */
+
+let language = DEFAULT_LANGUAGE;
+const localeListeners = [];
+
+function t(key, vars) {
+  return translate(language, key, vars);
+}
+
+/** Register a callback that re-renders translated chrome. */
+function onLocale(fn) {
+  localeListeners.push(fn);
+}
+
+function applyLocale(code) {
+  if (!LANGUAGES.includes(code)) code = DEFAULT_LANGUAGE;
+  language = code;
+  for (const fn of localeListeners) fn();
+}
 
 /* ============================================================
    DOM handles
@@ -67,11 +42,15 @@ const el = {
   sidebar: document.getElementById('sidebar'),
   outlinePanel: document.getElementById('outline'),
   outlineBody: document.getElementById('outline-body'),
+  outlineTitle: document.getElementById('outline-title'),
   tree: document.getElementById('tree'),
   treeSection: document.getElementById('tree-section'),
+  treeTitle: document.getElementById('tree-title'),
   recentList: document.getElementById('recent-list'),
   recentSection: document.getElementById('recent-section'),
+  recentTitle: document.getElementById('recent-title'),
   workspaceName: document.getElementById('workspace-name'),
+  btnOpenFolder: document.getElementById('btn-open-folder'),
   docTitle: document.getElementById('doc-title'),
   docMeta: document.getElementById('doc-meta'),
   editorHost: document.getElementById('editor-host'),
@@ -79,7 +58,6 @@ const el = {
   statusChars: document.getElementById('status-chars'),
   statusPath: document.getElementById('status-path'),
   statusSaved: document.getElementById('status-saved'),
-  btnOpenFolder: document.getElementById('btn-open-folder'),
 };
 
 /* ============================================================
@@ -89,26 +67,59 @@ const el = {
 let recent = [];
 let outline = [];
 let currentHeadingIndex = -1;
+let stats = { words: 0, chars: 0, lines: 0 };
+let workspaceName = '';
 
-const editor = new DocumentView(el.editorHost, {
-  onDirty: () => {
-    updateTitle();
-    updateSavedIndicator();
+const editor = new DocumentView(
+  el.editorHost,
+  {
+    onDirty: () => {
+      updateTitle();
+      updateSavedIndicator();
+    },
+    onStats: ({ words, chars, lines }) => {
+      stats = { words, chars, lines };
+      renderStats();
+      scheduleOutlineRefresh();
+    },
+    onOutline: () => {},
+    onCursorMove: () => {
+      updateCurrentHeading();
+    },
   },
-  onStats: ({ words, chars, lines }) => {
-    el.statusWords.textContent = `${words} word${words === 1 ? '' : 's'}`;
-    el.statusChars.textContent = `${chars} chars`;
-    el.docMeta.textContent = lines > 0 ? `${lines} lines` : '';
-    scheduleOutlineRefresh();
-  },
-  onOutline: () => {},
-  onCursorMove: () => {
-    updateCurrentHeading();
-  },
-}, WELCOME);
+  ''
+);
 
 /* The main process reads this to render the buffer for PDF export. */
-window.__lumenExportHtml = () => editor.exportHtml(editor.doc.name || 'Untitled');
+window.__lumenExportHtml = () => editor.exportHtml(editor.doc.name || t('untitledTitle'));
+
+/* ============================================================
+   Stats / title / save state
+   ============================================================ */
+
+function renderStats() {
+  const words =
+    language === 'en' && stats.words !== 1
+      ? t('wordCountPlural', { n: stats.words })
+      : t('wordCount', { n: stats.words });
+  el.statusWords.textContent = words;
+  el.statusChars.textContent = t('charCount', { n: stats.chars });
+  el.docMeta.textContent = stats.lines > 0 ? t('lineCount', { n: stats.lines }) : '';
+}
+
+function updateTitle() {
+  const name = editor.doc.name || t('untitled');
+  const marker = editor.dirty ? ' •' : '';
+  el.docTitle.textContent = `${name}${marker}`;
+  el.statusPath.textContent = editor.doc.path || '';
+  api.window.setTitle(`Lumen — ${name}`, editor.dirty);
+}
+
+function updateSavedIndicator() {
+  el.statusSaved.textContent = editor.dirty ? t('unsaved') : t('saved');
+  el.statusSaved.style.color = editor.dirty ? 'var(--accent)' : '';
+  updateTitle();
+}
 
 /* ============================================================
    Outline
@@ -127,7 +138,7 @@ function renderOutline() {
   if (outline.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'outline-empty';
-    empty.textContent = 'No headings yet.';
+    empty.textContent = t('emptyOutline');
     el.outlineBody.appendChild(empty);
     return;
   }
@@ -167,28 +178,12 @@ function updateCurrentHeading() {
 }
 
 /* ============================================================
-   Title / save state
-   ============================================================ */
-
-function updateTitle() {
-  const name = editor.doc.name || 'untitled';
-  const marker = editor.dirty ? ' •' : '';
-  el.docTitle.textContent = `${name}${marker}`;
-  el.statusPath.textContent = editor.doc.path || '';
-  api.window.setTitle(`Lumen — ${name}`, editor.dirty);
-}
-
-function updateSavedIndicator() {
-  el.statusSaved.textContent = editor.dirty ? 'unsaved' : 'saved';
-  el.statusSaved.style.color = editor.dirty ? 'var(--accent)' : '';
-  updateTitle();
-}
-
-/* ============================================================
    File operations
    ============================================================ */
 
 async function openFile(filePath) {
+  if (!(await confirmDiscardChanges())) return;
+
   try {
     const file = await api.file.read(filePath);
     editor.load(file);
@@ -200,7 +195,7 @@ async function openFile(filePath) {
     updateSavedIndicator();
     renderOutline();
   } catch (err) {
-    toast(`Could not open file: ${err.message}`);
+    toast(t('toastOpenFailed', { msg: err.message }));
   }
 }
 
@@ -211,16 +206,18 @@ async function saveFile() {
     await api.file.write(editor.doc.path, editor.content);
     editor.setClean(null);
     updateSavedIndicator();
-    toast('Saved');
+    toast(t('toastSaved'));
+    return true;
   } catch (err) {
-    toast(`Save failed: ${err.message}`);
+    toast(t('toastSaveFailed', { msg: err.message }));
+    return false;
   }
 }
 
 async function saveFileAs() {
-  const suggested = editor.doc.path || `${editor.doc.name || 'untitled'}.md`;
+  const suggested = editor.doc.path || `${editor.doc.name || t('untitledTitle')}.md`;
   const target = await api.file.saveDialog(suggested, editor.content);
-  if (!target) return;
+  if (!target) return false;
 
   const name = target.split(/[\\/]/).pop();
   editor.doc.path = target;
@@ -239,14 +236,25 @@ async function saveFileAs() {
   editor.view.dispatch({ effects: refreshEffect.of(null) });
 
   await refreshWorkspace();
-  toast('Saved as ' + name);
+  toast(t('toastSavedAs', { name }));
+  return true;
 }
 
-function newFile() {
-  editor.load({ path: null, name: 'untitled.md', dir: null, content: '', mtime: null });
+async function newFile() {
+  if (!(await confirmDiscardChanges())) return;
+  editor.load({ path: null, name: t('untitled'), dir: null, content: '', mtime: null });
   editor.dirty = false;
   updateSavedIndicator();
   renderOutline();
+}
+
+/** Returns true when it is safe to throw the current buffer away. */
+async function confirmDiscardChanges() {
+  if (!editor.dirty) return true;
+  const action = await api.close.ask(editor.doc.name || t('untitledTitle'));
+  if (action === 'cancel') return false;
+  if (action === 'save') return saveFile();
+  return true;
 }
 
 /* ============================================================
@@ -256,16 +264,20 @@ function newFile() {
 async function openWorkspace() {
   const ws = await api.file.openFolderDialog();
   if (!ws) return;
+  workspaceName = ws.name;
   el.workspaceName.textContent = ws.name;
   el.treeSection.hidden = false;
+  lastTree = ws.tree;
   renderTree(ws.tree);
 }
 
 async function refreshWorkspace() {
   const ws = await api.workspace.refresh();
   if (!ws) return;
+  workspaceName = ws.name;
   el.workspaceName.textContent = ws.name;
   el.treeSection.hidden = false;
+  lastTree = ws.tree;
   renderTree(ws.tree);
 }
 
@@ -275,7 +287,7 @@ function renderTree(nodes, parentUl = el.tree) {
   if (nodes.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'tree-empty';
-    empty.textContent = 'No markdown files.';
+    empty.textContent = t('emptyTree');
     parentUl.appendChild(empty);
     return;
   }
@@ -286,7 +298,8 @@ function renderTree(nodes, parentUl = el.tree) {
     if (node.kind === 'dir') {
       const row = document.createElement('div');
       row.className = 'tree-dir';
-      row.innerHTML = `<span class="caret">▸</span><span>${escapeText(node.name)}</span>`;
+      row.innerHTML = `<span class="caret">▸</span><span></span>`;
+      row.lastChild.textContent = node.name;
 
       const children = document.createElement('ul');
       children.className = 'tree-children';
@@ -327,7 +340,7 @@ function renderRecent() {
   if (!recent || recent.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'recent-empty';
-    empty.textContent = 'No recent files.';
+    empty.textContent = t('emptyRecent');
     el.recentList.appendChild(empty);
     return;
   }
@@ -351,7 +364,7 @@ function renderRecent() {
     const remove = document.createElement('button');
     remove.className = 'recent-remove';
     remove.textContent = '×';
-    remove.title = 'Remove from list';
+    remove.title = t('removeRecent');
     remove.addEventListener('click', (event) => {
       event.stopPropagation();
       recent = recent.filter((r) => r.path !== entry.path);
@@ -370,18 +383,18 @@ function renderRecent() {
 
 /* ============================================================
    Export
-   ============================================================
+   ============================================================ */
 
 async function exportHtml() {
-  const base = editor.doc.name ? editor.doc.name.replace(/\.md$/i, '') : 'untitled';
+  const base = editor.doc.name ? editor.doc.name.replace(/\.md$/i, '') : t('untitledTitle');
   const saved = await api.export.html(`${base}.html`, editor.exportHtml(base));
-  if (saved) toast(`Exported ${saved.split(/[\\/]/).pop()}`);
+  if (saved) toast(t('toastExported', { name: saved.split(/[\\/]/).pop() }));
 }
 
 async function exportPdf() {
-  const base = editor.doc.name ? editor.doc.name.replace(/\.md$/i, '') : 'untitled';
-  const saved = await api.export.pdf(`${base}.pdf`);
-  if (saved) toast(`Exported ${saved.split(/[\\/]/).pop()}`);
+  const base = editor.doc.name ? editor.doc.name.replace(/\.md$/i, '') : t('untitledTitle');
+  const saved = await api.export.pdf(`${base}.pdf`, editor.exportHtml(base));
+  if (saved) toast(t('toastExported', { name: saved.split(/[\\/]/).pop() }));
 }
 
 /* ============================================================
@@ -415,11 +428,46 @@ function toast(message) {
   }, 1800);
 }
 
-function escapeText(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+/* ============================================================
+   Chrome labels (re-applied on every language switch)
+   ============================================================ */
+
+function renderChrome() {
+  el.btnOpenFolder.title = t('openFolderTip');
+  el.btnOpenFolder.setAttribute('aria-label', t('openFolderTip'));
+  el.recentTitle.textContent = t('recent');
+  el.treeTitle.textContent = t('files');
+  el.outlineTitle.textContent = t('outlineTitle');
+  el.workspaceName.textContent = workspaceName || t('noFolder');
+
+  document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('appName');
+  editor.setSearchPhrases({
+    find: t('phraseFind'),
+    replace: t('phraseReplace'),
+    next: t('phraseNext'),
+    previous: t('phrasePrevious'),
+    all: t('phraseAll'),
+    matchCase: t('phraseMatchCase'),
+    byWord: t('phraseByWord'),
+    regexp: t('phraseRegexp'),
+    replaceAll: t('phraseReplaceAll'),
+    close: t('phraseClose'),
+  });
+  renderStats();
+  updateSavedIndicator();
+  renderRecent();
+  if (!el.treeSection.hidden) renderTreeNodesAgain();
+  renderOutline();
 }
+
+/** Keep the tree contents but re-render its empty-state label. */
+let lastTree = null;
+function renderTreeNodesAgain() {
+  if (lastTree) renderTree(lastTree);
+}
+
+onLocale(renderChrome);
 
 /* ============================================================
    Wiring
@@ -439,9 +487,12 @@ api.on('menu:open-folder', openWorkspace);
 api.on('menu:save', saveFile);
 api.on('menu:save-as', saveFileAs);
 api.on('menu:export', (kind) => (kind === 'html' ? exportHtml() : exportPdf()));
+
+/* The menu accelerator consumed Ctrl+F before the editor could see it, so the
+   search keymap never fired. Open the panel explicitly instead. */
 api.on('menu:find', () => {
-  // CodeMirror's search keymap handles Cmd/Ctrl+F once the editor has focus.
   editor.view.focus();
+  openSearchPanel(editor.view);
 });
 
 api.on('menu:toggle-outline', () => {
@@ -451,6 +502,57 @@ api.on('menu:toggle-sidebar', () => {
   el.sidebar.classList.toggle('collapsed');
 });
 api.on('menu:theme', (theme) => setTheme(theme));
+
+/* ------------------------------ language ------------------------------ */
+
+function setLanguage(code) {
+  applyLocale(code);
+  try {
+    localStorage.setItem('lumen.language', code);
+  } catch {
+    /* non-fatal */
+  }
+}
+
+api.on('menu:language', (code) => setLanguage(code));
+
+/* ------------------------------ close ------------------------------ */
+
+let closing = false;
+/** Harness-only override so the guard can be exercised without a native dialog. */
+let closeStub = null;
+
+async function handleCloseRequest() {
+  if (closing) return 'busy';
+  closing = true;
+  try {
+    const ask = closeStub ? () => Promise.resolve(closeStub) : api.close.ask;
+    const respond = closeStub ? () => Promise.resolve(true) : api.close.respond;
+
+    if (!editor.dirty) {
+      respond('discard');
+      return 'discard';
+    }
+    const action = await ask(editor.doc.name || t('untitledTitle'));
+    if (action === 'cancel') {
+      respond('cancel');
+      return 'cancel';
+    }
+    if (action === 'save') {
+      const saved = await saveFile();
+      if (!saved) {
+        respond('cancel');
+        return 'cancel-save-failed';
+      }
+    }
+    respond('discard');
+    return action;
+  } finally {
+    closing = false;
+  }
+}
+
+api.close.onRequest(handleCloseRequest);
 
 document.addEventListener('keydown', (event) => {
   const mod = event.ctrlKey || event.metaKey;
@@ -471,10 +573,6 @@ editor.view.dom.addEventListener('keyup', () => updateCurrentHeading());
 editor.view.dom.addEventListener('mouseup', () => updateCurrentHeading());
 
 /* ============================================================
-   Boot
-   ============================================================ */
-
-/* ============================================================
    Dev harness hooks
    ============================================================
 
@@ -492,12 +590,23 @@ if (api && api.harness) {
 
   window.__lumenDebug = { editor, setBaseDir, refreshEffect, setTheme };
   window.__lumenSetDocument = (text, name) => {
-    editor.load({ path: null, name: name || 'untitled.md', dir: null, content: text, mtime: null });
+    editor.load({ path: null, name: name || t('untitled'), dir: null, content: text, mtime: null });
     editor.dirty = false;
     updateSavedIndicator();
     renderOutline();
   };
-  window.__lumenSetTheme = (t) => (setTheme(t), document.documentElement.getAttribute('data-theme'));
+  window.__lumenSetTheme = (t2) => (setTheme(t2), document.documentElement.getAttribute('data-theme'));
+  window.__lumenSetLanguage = (code) => (setLanguage(code), language);
+  window.__lumenSimulateClose = (stub) => ((closeStub = stub || null), handleCloseRequest());
+  window.__lumenTypeText = (text) => {
+    const { from, to } = editor.view.state.selection.main;
+    editor.view.dispatch({ changes: { from, to, insert: text } });
+  };
+  window.__lumenOpenFind = () => {
+    editor.view.focus();
+    openSearchPanel(editor.view);
+    return Boolean(document.querySelector('.cm-search'));
+  };
   window.__lumenPlaceCaret = () => {
     const doc = editor.view.state.doc.toString();
     const match = /\*\*([^*]+)\*\*/.exec(doc);
@@ -548,14 +657,26 @@ if (api && api.harness) {
       statusWords: el.statusWords.textContent,
       statusChars: el.statusChars.textContent,
       docMeta: el.docMeta.textContent,
+      language,
     };
   };
 }
 
+/* ============================================================
+   Boot
+   ============================================================ */
+
 async function boot() {
   const info = await api.bootstrap();
   recent = info.recent || [];
-  renderRecent();
+
+  // macOS is the only platform with `titleBarStyle: hiddenInset`, so the
+  // custom drag strip only renders there.
+  if (info.platform === 'darwin') document.body.classList.add('mac');
+
+  // Language: the main process persists it (it also drives the menu and
+  // native dialogs), so it is the source of truth.
+  applyLocale(info.language || DEFAULT_LANGUAGE);
 
   let theme = 'dark';
   try {
@@ -565,7 +686,13 @@ async function boot() {
   }
   setTheme(theme);
 
-
+  editor.load({
+    path: null,
+    name: t('untitled'),
+    dir: null,
+    content: t('welcome'),
+    mtime: null,
+  });
   editor.dirty = false;
   updateSavedIndicator();
   renderOutline();

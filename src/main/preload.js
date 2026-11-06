@@ -13,6 +13,13 @@ contextBridge.exposeInMainWorld('lumen', {
 
   harness: Boolean(process.env.LUMEN_HARNESS === '1'),
 
+  close: {
+    /** Main process asks whether the window may close. */
+    onRequest: (handler) => listen('app:close-request', handler),
+    respond: (action) => invoke('app:close-response', action),
+    ask: (name) => invoke('app:ask-close', name),
+  },
+
   file: {
     read: (filePath) => invoke('file:read', filePath),
     write: (filePath, content) => invoke('file:write', filePath, content),
@@ -31,7 +38,7 @@ contextBridge.exposeInMainWorld('lumen', {
 
   export: {
     html: (suggested, html) => invoke('export:html', suggested, html),
-    pdf: (suggested) => invoke('export:pdf', suggested),
+    pdf: (suggested, html) => invoke('export:pdf', suggested, html),
   },
 
   window: {
