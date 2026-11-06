@@ -1,18 +1,82 @@
 {
   "name": "lumen",
   "productName": "Lumen",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A local-first Markdown editor with Typora-style live preview",
+  "author": {
+    "name": "zzulee",
+    "email": "11265206+zzulee@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zzulee/lumen.git"
+  },
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
     "build": "node build.js",
     "build:watch": "node build.js --watch",
     "start": "node build.js && electron .",
-    "verify": "node build.js && electron ."
+    "verify": "node build.js && electron .",
+    "dist": "node build.js && electron-builder --win --x64",
+    "dist:dir": "node build.js && electron-builder --win --x64 --dir",
+    "release": "node build.js && electron-builder --win --x64 --publish never"
+  },
+  "build": {
+    "appId": "com.zzulee.lumen",
+    "productName": "Lumen",
+    "copyright": "Copyright © 2026 zzulee",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/main/**/*",
+      "src/shared/**/*",
+      "src/renderer/index.html",
+      "src/renderer/styles.css",
+      "src/renderer/bundle.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "msi",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lumen",
+      "artifactName": "Lumen-Setup-${version}.${ext}"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "artifactName": "Lumen-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Lumen-Portable-${version}.${ext}"
+    }
   },
   "devDependencies": {
     "electron": "^33.0.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.24.0"
   },
   "dependencies": {
